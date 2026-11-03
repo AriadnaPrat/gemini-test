@@ -1,128 +1,401 @@
-# Gemini Browser + Playwright + dumpcap
+# Gemini Browser Traffic Capture — WSL2
 
-Plantilla inicial para automatizar prompts de `prompts.csv` en Gemini Browser con Chrome visible y capturar una sesión por prompt.
+Automatización de Gemini Browser con Playwright y Python, captura de tráfico con Wireshark/dumpcap y generación de `meta.json` y `groundtruth.json`.
 
-## Antes de empezar
+Esta guía está adaptada a **Ubuntu sobre WSL2**, utilizando WSLg para mostrar Chromium en una ventana visible.
 
-- Windows 10/11 recomendado.
-- Python 3.10+.
-- Google Chrome instalado.
-- Wireshark instalado (incluye `dumpcap.exe` y Npcap).
-- Permiso para capturar tráfico en el equipo/red.
-- `prompts.csv` con estas columnas: `prompt_id,text,expected_type,group,wording,source`.
+---
 
-**Importante:** el proyecto no usa la API de Gemini. Automatiza la interfaz web. Respeta los términos de servicio y límites del sitio. La interfaz de Gemini puede cambiar; los selectores de `config.json` deben validarse en tu navegador antes de un experimento completo.
+## 1. Arquitectura
 
-## 1. Instalar
+El experimento utiliza:
 
-Abre PowerShell en esta carpeta:
+- **Python:** coordina cada sesión.
+- **Playwright:** controla Chromium y la interfaz web de Gemini.
+- **Chromium:** navegador visible en WSLg.
+- **dumpcap:** captura el tráfico de red.
+- **JSON:** registra los metadatos y las respuestas.
 
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-python -m playwright install chromium
-```
-
-Playwright utilizará Chrome instalado (`browser_channel: "chrome"`). Si no encuentra Chrome, instala Chrome o cambia la configuración de canal.
-
-## 2. Preparar archivos
-
-Copia tu `prompts.csv` a esta carpeta. Copia `config.example.json` como `config.json`.
-
-Edita `config.json`:
-- `dumpcap_path`: ruta real a `dumpcap.exe`.
-- `interface`: número o nombre que aparece en `dumpcap -D`.
-- `model_name`: modelo que aparece en Gemini.
-- `limit`: deja `1` para la primera prueba; cambia a `60` después de validar.
-- `repetition`: número de repetición.
-- `selectors`: selectores correctos para el idioma y versión de Gemini.
-
-Lista interfaces:
-
-```powershell
-& "C:\Program Files\Wireshark\dumpcap.exe" -D
-```
-
-No asumas que la interfaz Wi-Fi es siempre la número 4. El número puede cambiar.
-
-## 3. Validar los selectores de Gemini
-
-Primero ejecuta:
-
-```powershell
-python inspect_gemini.py
-```
-
-Inicia sesión si hace falta. El inspector imprime botones visibles, campos editables y etiquetas de respuesta. Úsalo para ajustar `selectors` en `config.json`:
-- `new_chat`: botón para iniciar conversación nueva.
-- `prompt_input`: campo de escritura.
-- `send_button`: botón enviar.
-- `response_container`: contenedor de respuesta del modelo.
-- `generating_indicator`: botón/indicador que existe mientras Gemini genera. Si no puedes identificarlo, deja `null`; el script usará estabilidad del texto, que es menos robusta.
-
-No ejecutes las 60 filas hasta que una prueba aislada funcione y hayas comprobado visualmente que cada prompt se envía una sola vez a un chat nuevo.
-
-## 4. Primera prueba de una sesión
-
-```powershell
-python run_experiment.py --config config.json --limit 1
-```
-
-Chrome se abre visible. La primera vez inicia sesión manualmente y vuelve a PowerShell para pulsar ENTER. Se guarda el perfil en `browser_profile` para conservar la sesión entre ejecuciones.
-
-Revisa:
-- que Gemini haya recibido el prompt exacto;
-- que la respuesta esté completa en `groundtruth.json`;
-- que `capture.pcapng` se abra en Wireshark;
-- que `meta.json` tenga horas y estado correctos;
-- que `dumpcap.log` no contenga errores.
-
-## 5. Ejecutar los 60 prompts
-
-Después de validar la prueba, configura `limit` a `null` o `0` y ejecuta:
-
-```powershell
-python run_experiment.py --config config.json
-```
-
-Para continuar desde la fila de datos 21:
-
-```powershell
-python run_experiment.py --config config.json --start-row 21
-```
-
-El número de fila empieza en 1 y no cuenta la cabecera.
-
-## Salida
-
-Cada sesión crea una carpeta:
+Cada prompt genera una carpeta independiente:
 
 ```text
 captures/
-  20261103-..._gemini_browser_T01a_r1/
+  20261103-171205_gemini_browser_T01a_r1/
     capture.pcapng
     dumpcap.log
     meta.json
     groundtruth.json
 ```
 
-La etiqueta final se deriva de `len(answer_text.split())`:
-- <=100: `short`
-- >=300: `long`
-- 101-299: `ambiguous`, se conserva y se anota; `response_type` conserva `expected_type`.
+## 2. Requisitos
 
-## Limitaciones metodológicas importantes
+En Windows:
 
-1. `capture.pcapng` contiene todo el tráfico de la interfaz durante esa ventana, no solo tráfico de Gemini. Chrome, Google, DNS, sincronización y otros procesos pueden generar tráfico de fondo.
-2. Un chat nuevo no implica una conexión TCP/TLS nueva. Las conexiones pueden reutilizarse entre prompts.
-3. HTTPS cifra el contenido. No esperes ver el texto del prompt o la respuesta en claro en el PCAPNG.
-4. La automatización puede cambiar el comportamiento del navegador. Mantén constantes perfil, versión, idioma, modelo, extensiones y condiciones de red.
-5. El script es una base de trabajo, no un selector universal: la UI de Gemini cambia. Verifica selectores y extracción de respuesta antes de un lote.
-6. Antes del experimento definitivo, decide si cada repetición debe usar un perfil limpio o un perfil persistente. No mezcles estrategias entre sesiones.
-7. El script registra los bytes UTF-8 del prompt como `prompt_utf8_bytes`; esto no es lo mismo que los bytes de subida medidos en el PCAP.
+- Windows 11 recomendado.
+- WSL2 habilitado.
+- WSLg disponible para aplicaciones gráficas.
 
-## Seguridad y privacidad
+En WSL:
 
-El perfil `browser_profile` contiene cookies y tokens de sesión. No lo compartas ni lo subas a GitHub. Añade `browser_profile/`, `captures/` y `config.json` a `.gitignore`.
+- Ubuntu 22.04 o 24.04.
+- Python 3.10 o superior.
+- Playwright.
+- Chromium.
+- Wireshark/dumpcap.
+
+Comprueba la versión de WSL desde PowerShell:
+
+```powershell
+wsl --version
+wsl --status
+```
+
+Si todavía no tienes Ubuntu instalado:
+
+```powershell
+wsl --install -d Ubuntu-24.04
+```
+
+Reinicia Windows si lo solicita.
+
+## 3. Instalar dependencias en Ubuntu
+
+Abre Ubuntu desde Windows Terminal:
+
+```bash
+sudo apt update
+sudo apt upgrade -y
+
+sudo apt install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    wireshark \
+    tshark \
+    tcpdump \
+    libcap2-bin
+```
+
+Comprueba Python:
+
+```bash
+python3 --version
+```
+
+Comprueba dumpcap:
+
+```bash
+which dumpcap
+dumpcap --version
+```
+
+Normalmente la ruta será:
+
+```text
+/usr/bin/dumpcap
+```
+
+## 4. Permitir capturas sin ejecutar todo el experimento como root
+
+Configura los permisos de captura:
+
+```bash
+sudo dpkg-reconfigure wireshark-common
+```
+
+Cuando pregunte si los usuarios no privilegiados pueden capturar paquetes, selecciona:
+
+```text
+Yes
+```
+
+Añade tu usuario al grupo wireshark:
+
+```bash
+sudo usermod -aG wireshark "$USER"
+```
+
+Configura las capacidades de dumpcap:
+
+```bash
+sudo setcap cap_net_raw,cap_net_admin+eip "$(which dumpcap)"
+```
+
+Cierra la terminal de Ubuntu y reinicia WSL desde PowerShell:
+
+```powershell
+wsl --shutdown
+```
+
+Abre Ubuntu otra vez.
+
+Comprueba los grupos:
+
+```bash
+groups
+```
+
+Debe aparecer `wireshark`.
+
+Comprueba las interfaces:
+
+```bash
+dumpcap -D
+```
+
+En WSL2 normalmente aparecerá una interfaz denominada `eth0`.
+
+**Nota:** WSL2 utiliza una interfaz virtual. Esta captura no equivale necesariamente a capturar todo el tráfico desde la tarjeta Wi-Fi física de Windows. Si el protocolo requiere observar el tráfico en la interfaz física, habrá que configurar una captura en Windows y coordinarla desde WSL.
+
+## 5. Preparar el proyecto
+
+Es recomendable guardar el proyecto dentro del sistema de archivos Linux:
+
+```bash
+mkdir -p ~/gemini-playwright-capture
+cd ~/gemini-playwright-capture
+```
+
+Copia aquí los archivos del proyecto y tu `prompts.csv`.
+
+La estructura debe quedar así:
+
+```text
+gemini-playwright-capture/
+├── run_experiment.py
+├── inspect_gemini.py
+├── requirements.txt
+├── config.example.json
+├── prompts.csv
+├── captures/
+└── browser_profile/
+```
+
+Evita trabajar directamente desde `/mnt/c` si no lo necesitas: el sistema de archivos nativo de WSL suele ofrecer mejor rendimiento.
+
+## 6. Crear el entorno virtual de Python
+
+Desde la carpeta del proyecto:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Actualiza pip:
+
+```bash
+python -m pip install --upgrade pip
+```
+
+Instala las dependencias:
+
+```bash
+pip install -r requirements.txt
+```
+
+Instala los navegadores de Playwright:
+
+```bash
+python -m playwright install --with-deps chromium
+```
+
+## 7. Configurar Chromium visible
+
+En WSLg, Chromium puede abrirse en una ventana gráfica.
+
+Comprueba que WSLg está disponible:
+
+```bash
+echo "$DISPLAY"
+echo "$WAYLAND_DISPLAY"
+```
+
+Copia la configuración:
+
+```bash
+cp config.example.json config.json
+```
+
+Edita `config.json`:
+
+```bash
+nano config.json
+```
+
+Configura estos campos:
+
+```json
+{
+  "gemini_url": "https://gemini.google.com/app",
+  "browser_user_data_dir": "./browser_profile",
+  "browser_channel": null,
+  "headless": false,
+  "model_name": "RELLENAR_CON_EL_MODELO",
+  "dumpcap_path": "/usr/bin/dumpcap",
+  "interface": "eth0",
+  "output_dir": "./captures",
+  "csv_path": "./prompts.csv",
+  "run_label": "gemini_browser",
+  "repetition": 1,
+  "limit": 1,
+  "pause_for_manual_login": true
+}
+```
+
+Con `browser_channel: null`, Playwright utiliza el Chromium que instala con su propio gestor de navegadores, en lugar de buscar Google Chrome instalado en Linux.
+
+Con `headless: false`, el navegador se muestra en pantalla.
+
+Con `limit: 1`, solo se ejecuta un prompt durante la primera prueba.
+
+Con `interface: eth0`, dumpcap captura desde la interfaz de red virtual de WSL.
+
+Conserva los demás campos de `selectors` y `timing` del archivo original.
+
+## 8. Comprobar Chromium
+
+Antes de ejecutar el experimento, prueba que Playwright puede abrir el navegador:
+
+```bash
+python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=False); page=b.new_page(); page.goto('https://gemini.google.com/app'); input('Pulsa ENTER para cerrar...'); b.close(); p.stop()"
+```
+
+Debe abrirse una ventana de Chromium.
+
+Si no aparece, revisa WSLg y sus variables gráficas.
+
+## 9. Inspeccionar la interfaz de Gemini
+
+Ejecuta:
+
+```bash
+python inspect_gemini.py
+```
+
+Inicia sesión en Gemini y comprueba los elementos que imprime el inspector.
+
+Es necesario verificar los selectores de:
+
+- Botón de nuevo chat.
+- Campo de entrada del prompt.
+- Botón de envío.
+- Contenedor de respuesta.
+- Indicador de generación.
+
+La interfaz de Gemini puede cambiar y los selectores del ejemplo son provisionales.
+
+**No ejecutes los 60 prompts hasta verificar que la automatización envía el texto correcto y recoge la respuesta completa.**
+
+## 10. Primera prueba de captura
+
+Comprueba primero que dumpcap puede capturar:
+
+```bash
+dumpcap -D
+```
+
+Después ejecuta:
+
+```bash
+python run_experiment.py --config config.json --limit 1
+```
+
+La primera ejecución:
+
+1. Abre Chromium.
+2. Permite iniciar sesión manualmente en Gemini.
+3. Espera a que pulses ENTER en la terminal.
+4. Abre un chat nuevo.
+5. Envía el primer prompt.
+6. Espera a que termine la respuesta.
+7. Detiene la captura.
+8. Genera los dos JSON.
+
+Comprueba que la carpeta de salida contiene:
+
+```text
+capture.pcapng
+dumpcap.log
+meta.json
+groundtruth.json
+```
+
+Abre el PCAPNG con Wireshark para comprobar que contiene paquetes.
+
+## 11. Ejecutar los 60 prompts
+
+Una vez validada la prueba individual, modifica:
+
+```json
+"limit": 1
+```
+
+a:
+
+```json
+"limit": 0
+```
+
+Después ejecuta:
+
+```bash
+python run_experiment.py --config config.json
+```
+
+Para empezar desde el prompt número 21:
+
+```bash
+python run_experiment.py --config config.json --start-row 21
+```
+
+El script lee el CSV y procesa cada prompt de manera secuencial.
+
+## 12. Etiquetado de respuestas
+
+El script calcula:
+
+```python
+len(answer_text.split())
+```
+
+Las etiquetas se asignan así:
+
+| Palabras | Etiqueta |
+|---|---|
+| 0–100 | short |
+| 101–299 | ambiguous |
+| 300 o más | long |
+
+Las respuestas ambiguas se conservan, se anotan en `notes` y mantienen `expected_type` en `response_type`, según el protocolo.
+
+## 13. Consideraciones metodológicas
+
+1. Un PCAPNG por sesión facilita la asociación entre prompt, respuesta y captura.
+2. La captura de `eth0` puede incluir tráfico de fondo de WSL.
+3. Un chat nuevo no implica necesariamente una nueva conexión TCP/TLS.
+4. HTTPS cifra el contenido de los prompts y las respuestas.
+5. El tamaño de `prompt_utf8_bytes` no representa el tamaño real de la petición HTTP.
+6. Mantén constantes el modelo, navegador, perfil, idioma, condiciones de red y configuración.
+7. Registra los errores de automatización y no consideres válidas las sesiones incompletas.
+8. No mezcles capturas realizadas desde Windows y WSL sin documentar las diferencias.
+
+## 14. Privacidad
+
+El directorio `browser_profile/` contiene cookies y datos de autenticación de Gemini.
+
+No lo compartas ni lo subas a GitHub.
+
+Añade estas rutas a `.gitignore`:
+
+```text
+.venv/
+browser_profile/
+captures/
+config.json
+__pycache__/
+```
+
+---
+
+**Primera meta:** conseguir una sesión completa con Chromium visible, un PCAPNG válido y los dos JSON correctos antes de ejecutar el lote de 60 prompts.
