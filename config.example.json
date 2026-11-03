@@ -4,8 +4,8 @@
   "browser_channel": "chrome",
   "headless": false,
   "model_name": "RELLENAR_CON_EL_MODELO",
-  "dumpcap_path": "C:\\Program Files\\Wireshark\\dumpcap.exe",
-  "interface": "RELLENAR_NUMERO_O_NOMBRE_DE_INTERFAZ",
+  "dumpcap_path": "/usr/bin/dumpcap",
+  "interface": "eth0",
   "output_dir": "./captures",
   "csv_path": "./prompts.csv",
   "run_label": "gemini_browser",
@@ -14,8 +14,8 @@
   "pause_for_manual_login": true,
   "selectors": {
     "new_chat": "button[aria-label='New chat']",
-    "prompt_input": "rich-textarea [contenteditable='true']",
-    "send_button": "button[aria-label='Send message']",
+    "prompt_input": "rich-textarea [role='textbox'][contenteditable='true']",
+    "send_button": "button[aria-label='Send message'], button[aria-label*='Enviar'], button[aria-label*='Envia'], button[data-test-id='send-button']",
     "response_container": "model-response",
     "generating_indicator": "button[aria-label*='Stop']"
   },

@@ -7,11 +7,12 @@ import signal
 import subprocess
 import sys
 import time
+import unicodedata
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 
 def now_iso():
@@ -41,17 +42,27 @@ def write_json(path, obj):
 
 def start_dumpcap(exe, interface, pcap_path, log_path):
     if not Path(exe).exists():
-        raise FileNotFoundError(f"No encuentro dumpcap.exe: {exe}")
+        raise FileNotFoundError(f"No encuentro el ejecutable dumpcap configurado: {exe}")
     # CTRL_BREAK_EVENT permite solicitar un cierre limpio en Windows.
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     log_file = open(log_path, "ab")
-    proc = subprocess.Popen(
-        [exe, "-i", str(interface), "-w", str(pcap_path)],
-        stdin=subprocess.DEVNULL,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        creationflags=creationflags,
-    )
+    try:
+        proc = subprocess.Popen(
+            [exe, "-i", str(interface), "-w", str(pcap_path)],
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            creationflags=creationflags,
+        )
+    except PermissionError as exc:
+        log_file.close()
+        raise PermissionError(
+            f"No tengo permiso para ejecutar {exe}. En WSL, añade tu usuario al "
+            "grupo wireshark y reinicia WSL; consulta la sección 4 del README."
+        ) from exc
+    except OSError:
+        log_file.close()
+        raise
     time.sleep(1.5)
     if proc.poll() is not None:
         log_file.close()
@@ -84,6 +95,91 @@ def get_response_text(page, selector):
     if count == 0:
         return ""
     return locator.nth(count - 1).inner_text(timeout=5000).strip()
+
+
+def is_signed_out(page):
+    sign_in_buttons = page.get_by_role("button", name="Sign in", exact=True)
+    return any(
+        sign_in_buttons.nth(index).is_visible()
+        for index in range(sign_in_buttons.count())
+    )
+
+
+def start_new_chat(page, selectors, timeout_ms):
+    new_chat = page.locator(selectors["new_chat"])
+    for index in range(new_chat.count()):
+        button = new_chat.nth(index)
+        if button.is_visible():
+            button.click(timeout=timeout_ms)
+            return
+
+    chat_controls = page.locator("button, [role='button'], a")
+    visible_controls = []
+    new_words = (
+        "new", "nou", "nuevo", "nueva", "nova", "novo", "nouvelle", "neuer",
+        "nuova", "start", "create", "inicia", "iniciar", "crear", "comenca",
+    )
+    chat_words = ("chat", "conversation", "convers", "xat", "discussion")
+    for index in range(chat_controls.count()):
+        control = chat_controls.nth(index)
+        if not control.is_visible():
+            continue
+
+        labels = (
+            control.get_attribute("aria-label") or "",
+            control.get_attribute("title") or "",
+            control.inner_text(),
+        )
+        label = " ".join(labels).strip()
+        if label:
+            visible_controls.append(label)
+        normalized_label = unicodedata.normalize("NFKD", label).encode(
+            "ascii", "ignore"
+        ).decode("ascii").casefold()
+        if (
+            any(word in normalized_label for word in new_words)
+            and any(word in normalized_label for word in chat_words)
+        ):
+            control.click(timeout=timeout_ms)
+            return
+
+    prompt_box = page.locator(selectors["prompt_input"])
+    has_prompt_box = any(
+        prompt_box.nth(index).is_visible()
+        for index in range(prompt_box.count())
+    )
+    if has_prompt_box and page.locator(selectors["response_container"]).count() == 0:
+        return
+
+    raise RuntimeError(
+        "No se encontró el control para iniciar un chat nuevo y la página no parece "
+        "ser un chat vacío. Ejecuta inspect_gemini.py con la sesión iniciada. "
+        f"Controles visibles: {visible_controls[:30]}"
+    )
+
+
+def send_prompt(page, selectors, timeout_ms):
+    send_button = page.locator(selectors["send_button"])
+    for index in range(send_button.count()):
+        button = send_button.nth(index)
+        if button.is_visible() and button.is_enabled():
+            button.click(timeout=timeout_ms)
+            return
+
+    localized_send_button = page.get_by_role(
+        "button",
+        name=re.compile(r"\b(send|enviar|envia|submit)\b", re.IGNORECASE),
+    )
+    for index in range(localized_send_button.count()):
+        button = localized_send_button.nth(index)
+        if button.is_visible() and button.is_enabled():
+            button.click(timeout=timeout_ms)
+            return
+
+    raise RuntimeError(
+        "No se encontró un botón de envío visible y habilitado. No se envió el "
+        "prompt con Enter; revisa el selector selectors.send_button."
+    )
 
 
 def wait_for_response(page, cfg):
@@ -157,7 +253,11 @@ def main():
                   timeout=cfg["timing"]["navigation_timeout_ms"])
 
         if cfg.get("pause_for_manual_login", True):
-            input("\nInicia sesión en Gemini si hace falta. Cuando veas la interfaz lista, vuelve aquí y pulsa ENTER... ")
+            while True:
+                input("\nInicia sesión en Gemini y pulsa ENTER cuando la interfaz esté lista... ")
+                if not is_signed_out(page):
+                    break
+                print("[AVISO] Gemini todavía muestra 'Sign in'. Inicia sesión en Chrome antes de continuar.")
 
         selectors = cfg["selectors"]
         for index, row in enumerate(rows, start=args.start_row):
@@ -209,8 +309,14 @@ def main():
                 # Cada prompt debe comenzar en un chat nuevo.
                 page.goto(cfg["gemini_url"], wait_until="domcontentloaded",
                           timeout=cfg["timing"]["navigation_timeout_ms"])
-                new_chat = page.locator(selectors["new_chat"])
-                new_chat.first.click(timeout=cfg["timing"]["element_timeout_ms"])
+                if is_signed_out(page):
+                    raise RuntimeError(
+                        "Gemini muestra el botón 'Sign in'. Inicia sesión en Chrome "
+                        "antes de ejecutar el experimento."
+                    )
+                start_new_chat(
+                    page, selectors, cfg["timing"]["element_timeout_ms"]
+                )
 
                 prompt_box = page.locator(selectors["prompt_input"])
                 prompt_box.wait_for(state="visible", timeout=cfg["timing"]["element_timeout_ms"])
@@ -223,8 +329,10 @@ def main():
                 meta["capture_started_at"] = now_iso()
 
                 meta["prompt_sent_at"] = now_iso()
-                page.locator(selectors["send_button"]).click(
-                    timeout=cfg["timing"]["element_timeout_ms"]
+                send_prompt(
+                    page,
+                    selectors,
+                    cfg["timing"]["element_timeout_ms"],
                 )
 
                 answer = wait_for_response(page, cfg)

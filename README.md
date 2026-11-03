@@ -118,7 +118,7 @@ sudo usermod -aG wireshark "$USER"
 Configura las capacidades de dumpcap:
 
 ```bash
-sudo setcap cap_net_raw,cap_net_admin+eip "$(which dumpcap)"
+sudo setcap cap_net_raw,cap_net_admin+eip "$(sudo which dumpcap)"
 ```
 
 Cierra la terminal de Ubuntu y reinicia WSL desde PowerShell:
@@ -270,10 +270,10 @@ Si no aparece, revisa WSLg y sus variables gráficas.
 Ejecuta:
 
 ```bash
-python inspect_gemini.py
+python3 inspect_gemini.py
 ```
 
-Inicia sesión en Gemini y comprueba los elementos que imprime el inspector.
+El inspector reutiliza `browser_user_data_dir` de `config.json`, igual que el experimento. Inicia sesión si hace falta y comprueba los elementos que imprime.
 
 Es necesario verificar los selectores de:
 
@@ -305,9 +305,9 @@ La primera ejecución:
 
 1. Abre Chromium.
 2. Permite iniciar sesión manualmente en Gemini.
-3. Espera a que pulses ENTER en la terminal.
+3. Espera a que pulses ENTER en la terminal; si Gemini todavía muestra `Sign in`, vuelve a pedirlo y no empieza la sesión.
 4. Abre un chat nuevo.
-5. Envía el primer prompt.
+5. Envía el primer prompt haciendo clic en el botón configurado (también reconoce etiquetas comunes en español y catalán). Si no encuentra un botón visible y habilitado, falla sin enviar el prompt con ENTER.
 6. Espera a que termine la respuesta.
 7. Detiene la captura.
 8. Genera los dos JSON.

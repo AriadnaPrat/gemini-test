@@ -1,0 +1,61 @@
+prompt_id,text,expected_type,group,wording,source
+T01a,Why is the sky blue? Answer in roughly 20 words.,short,T01,W1,dolly:2958
+T01b,Why is the sky blue? Answer in around 800 words.,long,T01,W1,dolly:2958
+T02a,How does an LCD panel work? Keep your reply under 30 words.,short,T02,W2,dolly:6456
+T02b,How does an LCD panel work? Make your reply over 700 words.,long,T02,W2,dolly:6456
+T03a,"What causes ocean tides? Keep it brief, at most 40 words.",short,T03,W3,dolly:709
+T03b,"What causes ocean tides? Go in depth, at least 500 words.",long,T03,W3,dolly:709
+T04a,What is the difference between a GPU and a CPU? Use one or two sentences only.,short,T04,W4,dolly:8877
+T04b,What is the difference between a GPU and a CPU? Use at least eight paragraphs.,long,T04,W4,dolly:8877
+T05a,Short answer (max 50 words): What is the difference between a bee and a wasp?,short,T05,W5,dolly:8533
+T05b,Long answer (min 600 words): What is the difference between a bee and a wasp?,long,T05,W5,dolly:8533
+T06a,Why is the Great Salt Lake salty? Keep your reply under 30 words.,short,T06,W2,dolly:7964
+T06b,Why is the Great Salt Lake salty? Make your reply over 700 words.,long,T06,W2,dolly:7964
+T07a,"How does the temperature affect the speed of sound? Keep it brief, at most 40 words.",short,T07,W3,dolly:13023
+T07b,"How does the temperature affect the speed of sound? Go in depth, at least 500 words.",long,T07,W3,dolly:13023
+T08a,what causes leaves to change color in the fall season? Use one or two sentences only.,short,T08,W4,dolly:5520
+T08b,what causes leaves to change color in the fall season? Use at least eight paragraphs.,long,T08,W4,dolly:5520
+T09a,Short answer (max 50 words): What is the difference between a simile and a metaphor?,short,T09,W5,dolly:4873
+T09b,Long answer (min 600 words): What is the difference between a simile and a metaphor?,long,T09,W5,dolly:4873
+T10a,What is the difference between a trumpet and a trombone? Answer in roughly 20 words.,short,T10,W1,dolly:9396
+T10b,What is the difference between a trumpet and a trombone? Answer in around 800 words.,long,T10,W1,dolly:9396
+T11a,"Why do cats make purring sounds? Keep it brief, at most 40 words.",short,T11,W3,dolly:3244
+T11b,"Why do cats make purring sounds? Go in depth, at least 500 words.",long,T11,W3,dolly:3244
+T12a,how does an electric car work? Use one or two sentences only.,short,T12,W4,dolly:10379
+T12b,how does an electric car work? Use at least eight paragraphs.,long,T12,W4,dolly:10379
+T13a,Short answer (max 50 words): What causes a recession?,short,T13,W5,dolly:1000
+T13b,Long answer (min 600 words): What causes a recession?,long,T13,W5,dolly:1000
+T14a,What is the difference between coffee and espresso? Answer in roughly 20 words.,short,T14,W1,dolly:2794
+T14b,What is the difference between coffee and espresso? Answer in around 800 words.,long,T14,W1,dolly:2794
+T15a,What is the difference between algebra and calculus? Keep your reply under 30 words.,short,T15,W2,dolly:11956
+T15b,What is the difference between algebra and calculus? Make your reply over 700 words.,long,T15,W2,dolly:11956
+O01,Who wrote Beloved?,short,O01,none,dolly:1295
+O02,What is the capital of Colorado?,short,O02,none,dolly:4799
+O03,Which is a species of fish? Turbot or Turbo,short,O03,none,dolly:4110
+O04,Who was the first human to walk on the moon?,short,O04,none,dolly:1510
+O05,"which is the odd one out? Spoon, Pen, Knife, Fork",short,O05,none,dolly:5235
+O06,When was the Boeing 747 first entered into service?,short,O06,none,dolly:12401
+O07,"Identify which car manufacturer is British or American: Aston Martin, Cadillac",short,O07,none,dolly:4196
+O08,"Classify each of the following as a conductor or insulator: steel, copper, rubber, wood, cardboard, aluminum",short,O08,none,dolly:8311
+O09,"Tell me whether each of these wine regions is in California or Italy: Napa, Sonoma, Healdsburg, Tuscany, Veneto",short,O09,none,dolly:9185
+O10,"Classify each country as landlocked or not landlocked: China, Bolivia, Paraguay, Morocco, Ireland, Austria, Switzerland",short,O10,none,dolly:727
+O11,"Classify each of the following as either individual sports or team sports: wrestling, boxing, football, basketball, swimming, handball, weightlifting.",short,O11,none,dolly:1485
+O12,"Classify each of the following as either a US state or a country in the world: Illinois, Arizona, Iran, Washington, India, Bulgaria, Taiwan, New Mexico, Brazil",short,O12,none,dolly:7991
+O13,"Which of the following are not noble gases: helium, sodium, neon, oxygen, argon, hydrogen, calcium, magnesium, lithium, boron, krypton, nitrogen, xenon, aluminium, radon.",short,O13,none,dolly:10436
+O14,"Which of the following are typical ingredients that go into a banana split sundae: oranges, bananas, ice cream, banana bread, maraschino cherries, pickles, whipped cream, chopped nuts, chopped apples, moon shoes",short,O14,none,dolly:4771
+O15,"Classify the countries based on the continent they belong to - North America or South America with the former as 'north' and the latter as 'south'. United States, Mexico, Canada, Brazil, Columbia, Argentina, Cuba, Jamaica, Chile, Guyana, Peru.",short,O15,none,dolly:1615
+O16,Tell me a story,long,O16,none,dolly:10653
+O17,Write a story on humans on Mars.,long,O17,none,dolly:4455
+O18,Write a story about a dark and scary night.,long,O18,none,dolly:9219
+O19,Write a story about getting stuck on a train,long,O19,none,dolly:6616
+O20,Write a guide for how to catch a smallmouth bass.,long,O20,none,dolly:421
+O21,Write a review of Neil Gaiman's book American Gods.,long,O21,none,dolly:1327
+O22,Write an essay describing why baseball should be considered America's pastime.,long,O22,none,dolly:888
+O23,"Write a story where a princess discovers an abandon cave. The story should have a beginning, middle and end.",long,O23,none,dolly:3007
+O24,Write a story about an ice fishing trip in Minnesota. Make sure to include what you need for a successful trip.,long,O24,none,dolly:10950
+O25,Write a story about a toddler who woke up in the middle of the night after a nightmare about a monster under their bed.,long,O25,none,dolly:2612
+O26,"Create an itinerary for 3 days in Park City Utah that is good for children and adults. Include hotels, food options, one day of skiing and activities.",long,O26,none,dolly:12807
+O27,Write a story about a man who finds a magic lamp that has a genie inside. The genie should grant him wishes and the story should conclude with a tragic ending.,long,O27,none,dolly:2110
+O28,"Create a 5 day itinerary for a trip to Japan. Include visits to famous locations in Japan, and include a day-by-day breakdown of some activities to do and sites to visit.",long,O28,none,dolly:3401
+O29,Write a movie script about a dystopian past where intelligent machines have evolved to fight against humanity. A younger human challenges the ways of the elders and transforms into a cyborg to fight the machines.,long,O29,none,dolly:11265
+O30,"Write a story about a cat named Rory and the adventures he gets up to while his owner, Maria, is gone at work. Write the story in the form of an hourly journal from 7am to 7 pm written by Rory, and convey that Rory loves to sleep while Maria is gone.",long,O30,none,dolly:4863
