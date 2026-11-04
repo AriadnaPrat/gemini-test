@@ -5,18 +5,19 @@ import os
 import re
 import signal
 import subprocess
-import sys
 import time
 import unicodedata
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from playwright.sync_api import sync_playwright
 
 
 def now_iso():
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
+        "+00:00", "Z"
+    )
 
 
 def safe_name(value):
@@ -40,12 +41,103 @@ def write_json(path, obj):
     path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+class BrowserTimingCapture:
+    def __init__(self, page):
+        self.cdp = page.context.new_cdp_session(page)
+        self.cdp.send("Network.enable")
+        self.clock_offset = None
+        self.answer_request_id = None
+        self.answer_request = None
+        self.other_posts = set()
+        self.cdp.on("Network.requestWillBeSent", self.on_request)
+        self.cdp.on("Network.responseReceived", self.on_response)
+        self.cdp.on("Network.dataReceived", self.on_data)
+        self.cdp.on("Network.loadingFinished", self.on_finished)
+        self.cdp.on("Network.loadingFailed", self.on_failed)
+
+    def to_epoch(self, timestamp):
+        return timestamp + self.clock_offset if self.clock_offset is not None else None
+
+    @staticmethod
+    def clean_url(url):
+        parsed = urlsplit(url)
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+    def on_request(self, event):
+        request = event["request"]
+        wall_time = event.get("wallTime")
+        timestamp = event.get("timestamp")
+        if wall_time is not None and timestamp is not None:
+            self.clock_offset = wall_time - timestamp
+
+        url = request.get("url", "")
+        clean_url = self.clean_url(url)
+        if request.get("method") == "POST" and "StreamGenerate" not in url:
+            self.other_posts.add(clean_url)
+        if "StreamGenerate" not in url or self.answer_request is not None:
+            return
+
+        self.answer_request_id = event["requestId"]
+        self.answer_request = {
+            "path": clean_url,
+            "request_sent": (
+                wall_time if wall_time is not None else self.to_epoch(timestamp)
+            ),
+            "chunks": [],
+            "response_received": None,
+            "finished": None,
+            "failed": False,
+        }
+
+    def on_response(self, event):
+        if event.get("requestId") != self.answer_request_id:
+            return
+        self.answer_request["response_received"] = self.to_epoch(
+            event.get("timestamp")
+        )
+
+    def on_data(self, event):
+        if event.get("requestId") != self.answer_request_id:
+            return
+        timestamp = self.to_epoch(event.get("timestamp"))
+        if timestamp is not None:
+            self.answer_request["chunks"].append(
+                {"t": timestamp, "bytes": event.get("dataLength", 0)}
+            )
+
+    def on_finished(self, event):
+        if event.get("requestId") != self.answer_request_id:
+            return
+        self.answer_request["finished"] = self.to_epoch(
+            event.get("timestamp")
+        )
+
+    def on_failed(self, event):
+        if event.get("requestId") != self.answer_request_id:
+            return
+        self.answer_request["failed"] = True
+
+    def to_json(self, send_pressed, answer_text):
+        return {
+            "clock": "unix_epoch_s",
+            "send_pressed": send_pressed,
+            "answer_request": self.answer_request,
+            "answer_found_by": "path",
+            "answer_text": answer_text,
+            "answer_words": len(answer_text.split()),
+            "other_posts": sorted(self.other_posts),
+        }
+
+    def close(self):
+        self.cdp.detach()
+
+
 def start_dumpcap(exe, interface, pcap_path, log_path):
     if not Path(exe).exists():
         raise FileNotFoundError(f"No encuentro el ejecutable dumpcap configurado: {exe}")
     # CTRL_BREAK_EVENT permite solicitar un cierre limpio en Windows.
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-    log_file = open(log_path, "ab")
+    log_file = open(log_path, "w+b")
     try:
         proc = subprocess.Popen(
             [exe, "-i", str(interface), "-w", str(pcap_path)],
@@ -65,8 +157,12 @@ def start_dumpcap(exe, interface, pcap_path, log_path):
         raise
     time.sleep(1.5)
     if proc.poll() is not None:
+        log_file.seek(0)
+        details = log_file.read().decode("utf-8", errors="replace").strip()
         log_file.close()
-        raise RuntimeError(f"dumpcap terminó al arrancar. Consulta {log_path}")
+        raise RuntimeError(
+            f"dumpcap terminó al arrancar: {details or 'sin detalles'}"
+        )
     return proc, log_file
 
 
@@ -95,6 +191,26 @@ def get_response_text(page, selector):
     if count == 0:
         return ""
     return locator.nth(count - 1).inner_text(timeout=5000).strip()
+
+
+def detect_quic(tshark_path, pcap_path):
+    result = subprocess.run(
+        [
+            str(tshark_path),
+            "-r",
+            str(pcap_path),
+            "-Y",
+            "quic",
+            "-T",
+            "fields",
+            "-e",
+            "frame.number",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return bool(result.stdout.strip())
 
 
 def is_signed_out(page):
@@ -191,6 +307,8 @@ def wait_for_response(page, cfg):
     last_text = ""
     stable_since = None
     started_at = time.monotonic()
+    chunks = []
+    first_render = None
 
     while time.monotonic() < deadline:
         text = get_response_text(page, response_selector)
@@ -202,17 +320,45 @@ def wait_for_response(page, cfg):
                 stop_visible = False
 
         if text and text != last_text:
+            observed_at = time.time()
+            if first_render is None:
+                first_render = observed_at
+            common_prefix_length = 0
+            for old_char, new_char in zip(last_text, text):
+                if old_char != new_char:
+                    break
+                common_prefix_length += 1
+            added_text = text[common_prefix_length:]
+            if added_text:
+                chunks.append(
+                    {
+                        "t": observed_at,
+                        "plain_bytes": len(added_text.encode("utf-8")),
+                        "chars": len(added_text),
+                    }
+                )
             last_text = text
             stable_since = time.monotonic()
         elif text and stable_since is None:
             stable_since = time.monotonic()
+            first_render = time.time()
 
         enough_time = (time.monotonic() - started_at) >= 5
         stable = stable_since is not None and (
             time.monotonic() - stable_since >= timing["stable_text_seconds"]
         )
         if text and enough_time and stable and not stop_visible:
-            return text
+            if not chunks:
+                observed_at = time.time()
+                chunks.append(
+                    {
+                        "t": observed_at,
+                        "plain_bytes": len(text.encode("utf-8")),
+                        "chars": len(text),
+                    }
+                )
+                first_render = observed_at
+            return text, first_render, chunks
         time.sleep(timing["poll_interval_seconds"])
 
     raise TimeoutError("No se pudo confirmar el fin de la respuesta dentro del tiempo configurado.")
@@ -241,13 +387,13 @@ def main():
     print("Se abrirá Chrome visible. No cierres la ventana durante la ejecución.")
 
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
+        login_context = p.chromium.launch_persistent_context(
             str(user_data_dir),
             headless=bool(cfg.get("headless", False)),
             channel=cfg.get("browser_channel", "chrome"),
             viewport={"width": 1440, "height": 1000},
         )
-        page = context.pages[0] if context.pages else context.new_page()
+        page = login_context.pages[0] if login_context.pages else login_context.new_page()
         page.set_default_timeout(cfg["timing"]["element_timeout_ms"])
         page.goto(cfg["gemini_url"], wait_until="domcontentloaded",
                   timeout=cfg["timing"]["navigation_timeout_ms"])
@@ -259,53 +405,73 @@ def main():
                     break
                 print("[AVISO] Gemini todavía muestra 'Sign in'. Inicia sesión en Chrome antes de continuar.")
 
+        if is_signed_out(page):
+            raise RuntimeError(
+                "Gemini muestra el botón 'Sign in'. Inicia sesión en Chrome "
+                "antes de ejecutar el experimento."
+            )
+
+        login_context.close()
         selectors = cfg["selectors"]
         for index, row in enumerate(rows, start=args.start_row):
             prompt_id = str(row["prompt_id"]).strip()
             prompt_text = str(row["text"])
             expected_type = str(row["expected_type"]).strip()
-            timestamp_slug = datetime.now().strftime("%Y%m%d-%H%M%S")
-            session_id = f"{timestamp_slug}_{safe_name(cfg['run_label'])}_{safe_name(prompt_id)}_r{cfg.get('repetition', 1)}"
+            timestamp_slug = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            session_id = (
+                f"{timestamp_slug}_gemini_browser_{safe_name(prompt_id)}"
+                f"_r{cfg.get('repetition', 1)}"
+            )
             session_dir = output_dir / session_id
             session_dir.mkdir(parents=True, exist_ok=False)
             pcap_path = session_dir / "capture.pcapng"
-            capture_log = session_dir / "dumpcap.log"
+            keylog_path = session_dir / "keys.log"
+            dumpcap_log_path = session_dir / "dumpcap.log"
+            browser_timing_path = session_dir / "browser_timing.json"
 
             meta = {
                 "session_id": session_id,
-                "prompt_id": prompt_id,
                 "service": "gemini",
                 "client": "browser",
-                "automation": "Playwright Python",
-                "model": cfg.get("model_name", ""),
-                "repetition": cfg.get("repetition", 1),
-                "group": row.get("group", ""),
-                "wording": row.get("wording", ""),
-                "source": row.get("source", ""),
-                "expected_type": expected_type,
-                "prompt_utf8_bytes": len(prompt_text.encode("utf-8")),
-                "started_at": None,
-                "prompt_sent_at": None,
-                "response_finished_at": None,
-                "capture_interface": cfg.get("interface"),
-                "capture_file": "capture.pcapng",
-                "status": "started",
-                "notes": []
+                "client_version": "",
+                "quic": False,
+                "network": cfg.get("network", "unspecified"),
+                "netem": cfg.get("netem", "none"),
+                "prompt_id": prompt_id,
+                "response_type": expected_type,
+                "turns": 0,
+                "capturer": cfg.get("capturer", "unspecified"),
+                "captured_at": now_iso(),
+                "notes": (
+                    f"Model: {cfg.get('model_name', 'unspecified')}. "
+                    "groundtruth chunks are browser-rendered DOM observations. "
+                    "browser_timing chunks are Chrome network events. keys.log "
+                    "contains TLS secrets; keep it local and never share it."
+                ),
             }
             groundtruth = {
                 "session_id": session_id,
-                "prompt_id": prompt_id,
-                "prompt_text": prompt_text,
-                "answer_text": "",
-                "answer_word_count": None,
-                "response_type": expected_type,
-                "status": "pending",
-                "notes": []
+                "clock": "unix_epoch_s",
+                "turns": [],
             }
 
             capture_proc = None
             capture_log_file = None
+            context = None
+            timing_capture = None
+            send_pressed = None
+            answer = ""
+            error_message = ""
             try:
+                context = p.chromium.launch_persistent_context(
+                    str(user_data_dir),
+                    headless=bool(cfg.get("headless", False)),
+                    channel=cfg.get("browser_channel", "chrome"),
+                    viewport={"width": 1440, "height": 1000},
+                    args=[f"--ssl-key-log-file={keylog_path}"],
+                )
+                page = context.pages[0] if context.pages else context.new_page()
+                page.set_default_timeout(cfg["timing"]["element_timeout_ms"])
                 # Cada prompt debe comenzar en un chat nuevo.
                 page.goto(cfg["gemini_url"], wait_until="domcontentloaded",
                           timeout=cfg["timing"]["navigation_timeout_ms"])
@@ -314,6 +480,17 @@ def main():
                         "Gemini muestra el botón 'Sign in'. Inicia sesión en Chrome "
                         "antes de ejecutar el experimento."
                     )
+                browser = context.browser
+                browser_name = (
+                    "Chrome"
+                    if cfg.get("browser_channel") == "chrome"
+                    else "Chromium"
+                )
+                meta["client_version"] = (
+                    f"{browser_name} {browser.version}"
+                    if browser is not None
+                    else browser_name
+                )
                 start_new_chat(
                     page, selectors, cfg["timing"]["element_timeout_ms"]
                 )
@@ -322,61 +499,110 @@ def main():
                 prompt_box.wait_for(state="visible", timeout=cfg["timing"]["element_timeout_ms"])
                 prompt_box.fill(prompt_text)
 
-                meta["started_at"] = now_iso()
                 capture_proc, capture_log_file = start_dumpcap(
-                    cfg["dumpcap_path"], cfg["interface"], pcap_path, capture_log
+                    cfg["dumpcap_path"],
+                    cfg["interface"],
+                    pcap_path,
+                    dumpcap_log_path,
                 )
-                meta["capture_started_at"] = now_iso()
 
-                meta["prompt_sent_at"] = now_iso()
+                timing_capture = BrowserTimingCapture(page)
+                send_pressed = time.time()
                 send_prompt(
                     page,
                     selectors,
                     cfg["timing"]["element_timeout_ms"],
                 )
 
-                answer = wait_for_response(page, cfg)
-                meta["response_finished_at"] = now_iso()
-                groundtruth["answer_text"] = answer
-                words = len(answer.split())
-                groundtruth["answer_word_count"] = words
-                if words <= 100:
-                    derived_type = "short"
-                elif words >= 300:
-                    derived_type = "long"
-                else:
-                    derived_type = "ambiguous"
-                    groundtruth["notes"].append(f"ambiguous length: {words} words")
-                groundtruth["derived_response_type"] = derived_type
-                groundtruth["response_type"] = expected_type if derived_type == "ambiguous" else derived_type
-                groundtruth["status"] = "complete"
-                meta["status"] = "complete"
+                answer, first_render, chunks = wait_for_response(page, cfg)
+                browser_timing = timing_capture.to_json(send_pressed, answer)
+                answer_request = browser_timing["answer_request"]
+                if answer_request is None:
+                    raise RuntimeError(
+                        "No se observó la petición Gemini StreamGenerate en Chrome."
+                    )
+                request_sent = answer_request["request_sent"]
+                chunk_times = [chunk["t"] for chunk in chunks]
+                response_words = len(answer.split())
+                if expected_type != "image":
+                    if response_words <= 100:
+                        meta["response_type"] = "short"
+                    elif response_words >= 300:
+                        meta["response_type"] = "long"
+                    else:
+                        meta["notes"] += (
+                            f" Response length is ambiguous ({response_words} words);"
+                            " expected_type was retained."
+                        )
+                groundtruth["turns"].append(
+                    {
+                        "turn": 1,
+                        "prompt_id": prompt_id,
+                        "request_sent": request_sent,
+                        "first_chunk": chunk_times[0],
+                        "last_chunk": chunk_times[-1],
+                        "first_render": first_render,
+                        "response_words": response_words,
+                        "chunks": chunks,
+                    }
+                )
 
             except Exception as exc:
-                meta["status"] = "failed"
-                meta["error"] = f"{type(exc).__name__}: {exc}"
-                groundtruth["status"] = "failed"
-                groundtruth["notes"].append(meta["error"])
+                error_message = f"{type(exc).__name__}: {exc}"
                 print(f"[ERROR] {prompt_id}: {exc}")
             finally:
+                if timing_capture is not None:
+                    browser_timing = timing_capture.to_json(send_pressed, answer)
+                    try:
+                        timing_capture.close()
+                    except Exception as exc:
+                        error_message = (
+                            f"{error_message}; error cerrando CDP: "
+                            f"{type(exc).__name__}: {exc}"
+                        ).strip("; ")
+                else:
+                    browser_timing = {
+                        "clock": "unix_epoch_s",
+                        "send_pressed": send_pressed,
+                        "answer_request": None,
+                        "answer_found_by": "path",
+                        "answer_text": answer,
+                        "answer_words": len(answer.split()),
+                        "other_posts": [],
+                    }
+                write_json(browser_timing_path, browser_timing)
+                if context is not None:
+                    try:
+                        context.close()
+                    except Exception as exc:
+                        close_error = f"Error cerrando Chrome: {type(exc).__name__}: {exc}"
+                        error_message = f"{error_message}; {close_error}".strip("; ")
                 if capture_proc is not None:
                     stop_dumpcap(capture_proc, capture_log_file)
-                    meta["capture_stopped_at"] = now_iso()
-                meta["pcap_exists"] = pcap_path.exists()
-                meta["pcap_size_bytes"] = pcap_path.stat().st_size if pcap_path.exists() else 0
-                if meta["pcap_size_bytes"] == 0:
-                    meta["notes"].append("PCAPNG ausente o vacío; revisar dumpcap.log e interfaz.")
-                    if meta["status"] == "complete":
-                        meta["status"] = "capture_invalid"
+                if not keylog_path.exists() or keylog_path.stat().st_size == 0:
+                    error_message = error_message or (
+                        "No se generó keys.log; revisa que Chrome admita "
+                        "--ssl-key-log-file."
+                    )
+                if pcap_path.exists() and pcap_path.stat().st_size > 0:
+                    meta["quic"] = detect_quic(
+                        cfg.get("tshark_path", "tshark"), pcap_path
+                    )
+                else:
+                    error_message = error_message or (
+                        "No se generó un PCAPNG válido; revisa los permisos y la interfaz."
+                    )
+                if error_message:
+                    meta["notes"] = f"{meta['notes']} {error_message}".strip()
+                meta["turns"] = len(groundtruth["turns"])
                 write_json(session_dir / "meta.json", meta)
                 write_json(session_dir / "groundtruth.json", groundtruth)
-                print(f"[{meta['status']}] {prompt_id} -> {session_dir}")
+                status = "complete" if not error_message and meta["turns"] else "failed"
+                print(f"[{status}] {prompt_id} -> {session_dir}")
 
             # Evita ejecutar una segunda sesión si la captura no se cerró correctamente.
-            if meta["status"] == "failed":
+            if error_message:
                 print("La sesión falló. Se continúa con el siguiente prompt; revisa los archivos de esta sesión.")
-
-        context.close()
 
 
 if __name__ == "__main__":

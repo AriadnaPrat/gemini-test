@@ -14,9 +14,10 @@ El experimento utiliza:
 - **Playwright:** controla Chromium y la interfaz web de Gemini.
 - **Chromium:** navegador visible en WSLg.
 - **dumpcap:** captura el tráfico de red.
-- **JSON:** registra los metadatos y las respuestas.
+- **JSON:** registra los metadatos y las métricas temporales.
 
-Cada prompt genera una carpeta independiente:
+Cada prompt genera una carpeta independiente bajo `output_dir` (por defecto,
+`captures/`). Puedes copiar las sesiones al drive manualmente:
 
 ```text
 captures/
@@ -25,7 +26,19 @@ captures/
     dumpcap.log
     meta.json
     groundtruth.json
+    browser_timing.json
+    keys.log
 ```
+
+`meta.json` y `groundtruth.json` siguen el contrato de `data_formats.md`.
+`groundtruth.json` conserva los cambios de texto observados en el DOM;
+`browser_timing.json` registra los eventos de red de Chrome (`StreamGenerate`)
+con tiempos y bytes por evento, además de la respuesta mostrada por Gemini.
+`dumpcap.log` guarda la salida de la captura.
+
+`keys.log` contiene secretos TLS que permiten descifrar tráfico de la captura.
+Se genera localmente junto a cada PCAP para análisis del capturador; **no lo
+copies al drive ni lo compartas**.
 
 ## 2. Requisitos
 
@@ -87,6 +100,13 @@ Comprueba dumpcap:
 ```bash
 which dumpcap
 dumpcap --version
+```
+
+Comprueba también tshark, que se usa para detectar si el PCAP contiene QUIC:
+
+```bash
+which tshark
+tshark --version
 ```
 
 Normalmente la ruta será:
@@ -231,12 +251,15 @@ Configura estos campos:
   "browser_user_data_dir": "./browser_profile",
   "browser_channel": null,
   "headless": false,
-  "model_name": "RELLENAR_CON_EL_MODELO",
+  "model_name": "Flash-Lite",
   "dumpcap_path": "/usr/bin/dumpcap",
+  "tshark_path": "/usr/bin/tshark",
   "interface": "eth0",
   "output_dir": "./captures",
   "csv_path": "./prompts.csv",
-  "run_label": "gemini_browser",
+  "network": "unspecified",
+  "netem": "none",
+  "capturer": "unspecified",
   "repetition": 1,
   "limit": 1,
   "pause_for_manual_login": true
@@ -250,6 +273,11 @@ Con `headless: false`, el navegador se muestra en pantalla.
 Con `limit: 1`, solo se ejecuta un prompt durante la primera prueba.
 
 Con `interface: eth0`, dumpcap captura desde la interfaz de red virtual de WSL.
+
+`output_dir` es un directorio local de preparación; copia las carpetas de sesión
+al drive cuando quieras compartirlas. Rellena `network` y `capturer` con los
+valores de la captura. `client_version` se obtiene del navegador y `quic` se
+detecta leyendo el PCAP con tshark.
 
 Conserva los demás campos de `selectors` y `timing` del archivo original.
 
@@ -317,6 +345,8 @@ Comprueba que la carpeta de salida contiene:
 ```text
 capture.pcapng
 dumpcap.log
+browser_timing.json
+keys.log
 meta.json
 groundtruth.json
 ```
@@ -353,7 +383,7 @@ El script lee el CSV y procesa cada prompt de manera secuencial.
 
 ## 12. Etiquetado de respuestas
 
-El script calcula:
+El script calcula las palabras de la respuesta recogida por el navegador:
 
 ```python
 len(answer_text.split())
@@ -364,10 +394,12 @@ Las etiquetas se asignan así:
 | Palabras | Etiqueta |
 |---|---|
 | 0–100 | short |
-| 101–299 | ambiguous |
+| 101–299 | expected_type conservado y anotado como ambiguo |
 | 300 o más | long |
 
-Las respuestas ambiguas se conservan, se anotan en `notes` y mantienen `expected_type` en `response_type`, según el protocolo.
+`browser_timing.json` conserva el texto completo de la respuesta, como en la
+estructura de referencia. Para respuestas ambiguas se conserva `expected_type`
+en `meta.json` y se explica en `notes`.
 
 ## 13. Consideraciones metodológicas
 
@@ -379,6 +411,9 @@ Las respuestas ambiguas se conservan, se anotan en `notes` y mantienen `expected
 6. Mantén constantes el modelo, navegador, perfil, idioma, condiciones de red y configuración.
 7. Registra los errores de automatización y no consideres válidas las sesiones incompletas.
 8. No mezcles capturas realizadas desde Windows y WSL sin documentar las diferencias.
+9. Todos los tiempos de `groundtruth.json` y `browser_timing.json` son Unix en
+   segundos; los chunks de groundtruth son cambios observados en el DOM y los
+   de browser timing son eventos de red de Chrome.
 
 ## 14. Privacidad
 
