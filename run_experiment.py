@@ -450,6 +450,8 @@ def main():
                 write_json(session_dir / "meta.json", meta)
                 status = "complete" if not error_message and turns else "failed"
                 print(f"[{status}] {prompt_id} -> {session_dir}")
+                if error_message:
+                    print(f"    motivo: {error_message}")
 
             # Evita ejecutar una segunda sesión si la captura no se cerró correctamente.
             if error_message:
