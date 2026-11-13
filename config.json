@@ -1,0 +1,32 @@
+{
+  "gemini_url": "https://gemini.google.com/app",
+  "browser_user_data_dir": "./browser_profile",
+  "browser_channel": "chrome",
+  "headless": false,
+  "model_name": "Flash-Lite",
+  "dumpcap_path": "/usr/bin/dumpcap",
+  "interface": "eth0",
+  "output_dir": "./captures",
+  "csv_path": "./prompts.csv",
+  "run_label": "gemini_browser",
+  "network": "si",
+  "netem": "none",
+  "capturer": "Ariadna",
+  "repetition": 1,
+  "limit": 1,
+  "pause_for_manual_login": true,
+  "selectors": {
+    "new_chat": "button[aria-label='New chat']",
+    "prompt_input": "rich-textarea [role='textbox'][contenteditable='true']",
+    "send_button": "button[aria-label='Send message'], button[aria-label*='Enviar'], button[aria-label*='Envia'], button[data-test-id='send-button']",
+    "response_container": "model-response",
+    "generating_indicator": "button[aria-label*='Stop']"
+  },
+  "timing": {
+    "navigation_timeout_ms": 60000,
+    "element_timeout_ms": 30000,
+    "response_timeout_seconds": 300,
+    "stable_text_seconds": 5,
+    "poll_interval_seconds": 1
+  }
+}

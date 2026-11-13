@@ -1,5 +1,4 @@
 browser_profile/
 captures/
-config.json
 .venv/
 __pycache__/

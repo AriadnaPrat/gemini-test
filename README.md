@@ -1,6 +1,6 @@
 # Gemini Browser Traffic Capture — WSL2
 
-Automatización de Gemini Browser con Playwright y Python, captura de tráfico con Wireshark/dumpcap y generación de `meta.json` y `groundtruth.json`.
+Automatización de Gemini Browser con Playwright y Python, captura de tráfico con Wireshark/dumpcap y generación de `meta.json`.
 
 Esta guía está adaptada a **Ubuntu sobre WSL2**, utilizando WSLg para mostrar Chromium en una ventana visible.
 
@@ -23,18 +23,14 @@ Cada prompt genera una carpeta independiente bajo `output_dir` (por defecto,
 captures/
   20261103-171205_gemini_browser_T01a_r1/
     capture.pcapng
+    keys.log
     dumpcap.log
     meta.json
-    groundtruth.json
-    browser_timing.json
-    keys.log
 ```
 
-`meta.json` y `groundtruth.json` siguen el contrato de `data_formats.md`.
-`groundtruth.json` conserva los cambios de texto observados en el DOM;
-`browser_timing.json` registra los eventos de red de Chrome (`StreamGenerate`)
-con tiempos y bytes por evento, además de la respuesta mostrada por Gemini.
-`dumpcap.log` guarda la salida de la captura.
+`meta.json` sigue el contrato de `data_formats.md`. `response_type` es el
+`expected_type` del CSV hasta que `groundtruth.json` (generado aparte) dé el
+recuento de palabras. `dumpcap.log` guarda la salida de la captura.
 
 `keys.log` contiene secretos TLS que permiten descifrar tráfico de la captura.
 Se genera localmente junto a cada PCAP para análisis del capturador; **no lo
@@ -338,17 +334,15 @@ La primera ejecución:
 5. Envía el primer prompt haciendo clic en el botón configurado (también reconoce etiquetas comunes en español y catalán). Si no encuentra un botón visible y habilitado, falla sin enviar el prompt con ENTER.
 6. Espera a que termine la respuesta.
 7. Detiene la captura.
-8. Genera los dos JSON.
+8. Genera `meta.json`.
 
 Comprueba que la carpeta de salida contiene:
 
 ```text
 capture.pcapng
-dumpcap.log
-browser_timing.json
 keys.log
+dumpcap.log
 meta.json
-groundtruth.json
 ```
 
 Abre el PCAPNG con Wireshark para comprobar que contiene paquetes.
@@ -383,23 +377,9 @@ El script lee el CSV y procesa cada prompt de manera secuencial.
 
 ## 12. Etiquetado de respuestas
 
-El script calcula las palabras de la respuesta recogida por el navegador:
-
-```python
-len(answer_text.split())
-```
-
-Las etiquetas se asignan así:
-
-| Palabras | Etiqueta |
-|---|---|
-| 0–100 | short |
-| 101–299 | expected_type conservado y anotado como ambiguo |
-| 300 o más | long |
-
-`browser_timing.json` conserva el texto completo de la respuesta, como en la
-estructura de referencia. Para respuestas ambiguas se conserva `expected_type`
-en `meta.json` y se explica en `notes`.
+El script no cuenta palabras: `response_type` en `meta.json` es el
+`expected_type` del CSV. La etiqueta definitiva (`short`/`long`) se obtiene más
+tarde a partir del recuento de palabras de `groundtruth.json`.
 
 ## 13. Consideraciones metodológicas
 
@@ -411,9 +391,6 @@ en `meta.json` y se explica en `notes`.
 6. Mantén constantes el modelo, navegador, perfil, idioma, condiciones de red y configuración.
 7. Registra los errores de automatización y no consideres válidas las sesiones incompletas.
 8. No mezcles capturas realizadas desde Windows y WSL sin documentar las diferencias.
-9. Todos los tiempos de `groundtruth.json` y `browser_timing.json` son Unix en
-   segundos; los chunks de groundtruth son cambios observados en el DOM y los
-   de browser timing son eventos de red de Chrome.
 
 ## 14. Privacidad
 
@@ -433,4 +410,4 @@ __pycache__/
 
 ---
 
-**Primera meta:** conseguir una sesión completa con Chromium visible, un PCAPNG válido y los dos JSON correctos antes de ejecutar el lote de 60 prompts.
+**Primera meta:** conseguir una sesión completa con Chromium visible, un PCAPNG válido, `keys.log` y `meta.json` correctos antes de ejecutar el lote de 60 prompts.
