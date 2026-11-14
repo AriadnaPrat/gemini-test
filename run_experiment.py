@@ -114,11 +114,18 @@ def detect_quic(tshark_path, pcap_path):
             "-e",
             "frame.number",
         ],
-        check=True,
         capture_output=True,
         text=True,
     )
-    return bool(result.stdout.strip())
+    found = bool(result.stdout.strip())
+    if result.returncode != 0:
+        stderr = result.stderr.strip() or "sin detalles"
+        if found:
+            # p. ej. último paquete truncado: los frames leídos siguen siendo válidos.
+            print(f"    aviso tshark (código {result.returncode}): {stderr}")
+        else:
+            raise RuntimeError(f"tshark devolvió código {result.returncode}: {stderr}")
+    return found
 
 
 def is_signed_out(page):
